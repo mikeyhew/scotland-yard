@@ -3,13 +3,13 @@ use {
     std::{
         io::{BufReader},
         fs::{File},
-        collections::{HashMap, HashSet},
+        collections::{BTreeMap, BTreeSet},
     },
     generic_array::{arr},
     regex::Regex,
     derive_more::{Display},
     joinery::{Joinable},
-    failure::{Error, format_err, ensure},
+    failure::{Error, format_err, ensure, bail},
     rustyline::error::ReadlineError,
 };
 
@@ -17,7 +17,6 @@ type NodeId = u32;
 
 #[derive(Serialize, Deserialize)]
 #[derive(Debug, Clone)]
-#[derive(Eq, PartialEq, Hash)]
 struct Node {
     id: NodeId,
     taxi: Vec<NodeId>,
@@ -37,14 +36,14 @@ enum TicketKind {
 }
 
 struct Graph {
-    map: HashMap<NodeId, Node>,
+    map: BTreeMap<NodeId, Node>,
 }
 
 impl Graph {
     fn possible_nodes(
         &self, last_known: NodeId, tickets: impl IntoIterator<Item=TicketKind>,
-    ) -> HashSet<NodeId> {
-        let mut nodes: HashSet<NodeId> = arr![NodeId; last_known].into_iter().collect();
+    ) -> Vec<NodeId> {
+        let mut nodes: BTreeSet<NodeId> = arr![NodeId; last_known].into_iter().collect();
 
         for ticket in tickets.into_iter() {
             nodes = nodes.into_iter().flat_map(|node_id| {
@@ -61,16 +60,16 @@ impl Graph {
                             .collect::<Vec<NodeId>>()
                     }
                 }
-            }).into_iter().collect::<HashSet<NodeId>>();
+            }).into_iter().collect::<BTreeSet<NodeId>>();
         }
 
-        nodes
+        nodes.into_iter().collect()
     }
 }
 
 fn parse_line(line: &str) -> Result<(NodeId, Vec<TicketKind>), Error> {
     let num_re = Regex::new(r"\d+").unwrap();
-    let ticket_re = Regex::new(r"taxi|bus|tube|black").unwrap();
+    let ticket_re = Regex::new(r"[a-zA-Z]+").unwrap();
 
     let node_id: NodeId = num_re.find(line)
         .ok_or_else(|| format_err!("Could not find the initial place number"))?
@@ -80,15 +79,17 @@ fn parse_line(line: &str) -> Result<(NodeId, Vec<TicketKind>), Error> {
 
     ensure!((1..=199).contains(&node_id), "Place number {} is out of range", node_id);
 
-    let tickets = ticket_re.find_iter(line).filter_map(|mtch| {
-        Some(match mtch.as_str() {
+    let tickets = ticket_re.find_iter(line).map(|mtch| {
+        let word = mtch.as_str().to_lowercase();
+
+        Ok(match word.as_str() {
             "taxi" => TicketKind::Taxi,
             "bus" => TicketKind::Bus,
             "tube" => TicketKind::Tube,
             "black" => TicketKind::Black,
-            _ => return None,
+            _ => bail!("Bad ticket type: {}", word),
         })
-    }).collect::<Vec<TicketKind>>();
+    }).collect::<Result<Vec<TicketKind>, _>>()?;
 
     Ok((node_id, tickets))
 }
@@ -99,7 +100,7 @@ fn main() -> Result<(), Error> {
 
     let graph = nodes.into_iter()
         .map(|node| (node.id, node))
-        .collect::<HashMap<NodeId, Node>>();
+        .collect::<BTreeMap<NodeId, Node>>();
     let graph = Graph{map: graph};
 
     let mut editor = rustyline::Editor::<()>::new();
@@ -107,8 +108,8 @@ fn main() -> Result<(), Error> {
     loop {
         let line = match editor.readline("> ") {
             Ok(line) => line,
-            Err(ReadlineError::Interrupted)
-            | Err(ReadlineError::Eof) => return Ok(()),
+            Err(ReadlineError::Interrupted) => continue,
+            Err(ReadlineError::Eof) => break,
             err => err?,
         };
 
@@ -129,4 +130,6 @@ fn main() -> Result<(), Error> {
             }
         }
     }
+
+    Ok(())
 }
