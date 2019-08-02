@@ -1,7 +1,7 @@
 use {
     serde_derive::{Serialize, Deserialize},
     std::{
-        io::{self, BufReader, BufRead as _, stdin},
+        io::{BufReader},
         fs::{File},
         collections::{HashMap, HashSet},
     },
@@ -9,6 +9,8 @@ use {
     regex::Regex,
     derive_more::{Display},
     joinery::{Joinable},
+    failure::{Error, format_err, ensure},
+    rustyline::error::ReadlineError,
 };
 
 type NodeId = u32;
@@ -66,11 +68,17 @@ impl Graph {
     }
 }
 
-fn parse_line(line: &str) -> Option<(NodeId, Vec<TicketKind>)> {
+fn parse_line(line: &str) -> Result<(NodeId, Vec<TicketKind>), Error> {
     let num_re = Regex::new(r"\d+").unwrap();
     let ticket_re = Regex::new(r"taxi|bus|tube|black").unwrap();
 
-    let node_id: NodeId = num_re.find(line)?.as_str().parse().ok()?;
+    let node_id: NodeId = num_re.find(line)
+        .ok_or_else(|| format_err!("Could not find the initial place number"))?
+        .as_str()
+        .parse()
+        .map_err(|_| format_err!("Failed to parse place number"))?;
+
+    ensure!((1..=199).contains(&node_id), "Place number {} is out of range", node_id);
 
     let tickets = ticket_re.find_iter(line).filter_map(|mtch| {
         Some(match mtch.as_str() {
@@ -82,10 +90,10 @@ fn parse_line(line: &str) -> Option<(NodeId, Vec<TicketKind>)> {
         })
     }).collect::<Vec<TicketKind>>();
 
-    Some((node_id, tickets))
+    Ok((node_id, tickets))
 }
 
-fn main() -> io::Result<()> {
+fn main() -> Result<(), Error> {
     let file = File::open("nodes.json")?;
     let nodes: Vec<Node> = serde_json::from_reader(BufReader::new(file))?;
 
@@ -94,19 +102,31 @@ fn main() -> io::Result<()> {
         .collect::<HashMap<NodeId, Node>>();
     let graph = Graph{map: graph};
 
-    for line in BufReader::new(stdin()).lines() {
-        if let Some((node_id, tickets)) = parse_line(line?.as_str()) {
-            println!("Mr. X was last seen at {}, and has since used these tickets:", node_id);
-            println!("  {}", tickets.clone().join_with(", "));
+    let mut editor = rustyline::Editor::<()>::new();
 
-            let nodes = graph.possible_nodes(node_id, tickets);
+    loop {
+        let line = match editor.readline("> ") {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted)
+            | Err(ReadlineError::Eof) => return Ok(()),
+            err => err?,
+        };
 
-            println!("By now, he could be at these {} locations:", nodes.len());
-            println!("  {}", nodes.join_with(", "));
-        } else {
-            println!("Invalid line");
+        match parse_line(&line) {
+            Ok((node_id, tickets)) => {
+                editor.add_history_entry(line);
+
+                println!("Mr. X was last seen at {}, and has since used these tickets:", node_id);
+                println!("  {}", tickets.clone().join_with(", "));
+
+                let nodes = graph.possible_nodes(node_id, tickets);
+
+                println!("By now, he could be at these {} locations:", nodes.len());
+                println!("  {}", nodes.join_with(", "));
+            }
+            Err(err) => {
+                eprintln!("{}", err);
+            }
         }
     }
-
-    Ok(())
 }
