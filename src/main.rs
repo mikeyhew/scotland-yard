@@ -11,6 +11,7 @@ use {
     joinery::{Joinable},
     failure::{Error, format_err, ensure, bail},
     rustyline::error::ReadlineError,
+    lazy_static::lazy_static,
 };
 
 type NodeId = u32;
@@ -68,10 +69,12 @@ impl Graph {
 }
 
 fn parse_line(line: &str) -> Result<(NodeId, Vec<TicketKind>), Error> {
-    let num_re = Regex::new(r"\d+").unwrap();
-    let ticket_re = Regex::new(r"[a-zA-Z]+").unwrap();
+    lazy_static! {
+        static ref NUM_RE: Regex = Regex::new(r"\d+").unwrap();
+        static ref TICKET_RE: Regex = Regex::new(r"[a-zA-Z]+").unwrap();
+    }
 
-    let node_id: NodeId = num_re.find(line)
+    let node_id: NodeId = NUM_RE.find(line)
         .ok_or_else(|| format_err!("Could not find the initial place number"))?
         .as_str()
         .parse()
@@ -79,7 +82,7 @@ fn parse_line(line: &str) -> Result<(NodeId, Vec<TicketKind>), Error> {
 
     ensure!((1..=199).contains(&node_id), "Place number {} is out of range", node_id);
 
-    let tickets = ticket_re.find_iter(line).map(|mtch| {
+    let tickets = TICKET_RE.find_iter(line).map(|mtch| {
         let word = mtch.as_str().to_lowercase();
 
         Ok(match word.as_str() {
